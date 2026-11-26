@@ -1,0 +1,16 @@
+[project]
+name = "flygotchi-backend"
+version = "0.1.0"
+description = "Drosophila connectome digital pet simulation backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "websockets>=13.0",
+    "numpy>=2.1.0",
+    "pydantic>=2.9.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
