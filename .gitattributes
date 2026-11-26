@@ -1,0 +1,33 @@
+# Normalize line endings across Linux and Windows (WSL2 / Git for Windows)
+* text=auto eol=lf
+
+# Explicit text files
+*.py text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.sh text eol=lf
+Dockerfile text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.npz binary
+*.npy binary
+*.h5 binary
+*.pt binary
+*.parquet binary

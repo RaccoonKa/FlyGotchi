@@ -1,0 +1,28 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/src:/app/src
+      - ./data:/app/data
+    environment:
+      FLYGOTCHI_DATA_DIR: /app/data
+      WATCHFILES_FORCE_POLLING: "true"
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+    depends_on:
+      - backend
