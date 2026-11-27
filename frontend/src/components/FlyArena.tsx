@@ -1,117 +1,103 @@
 import { useEffect, useRef } from 'react';
 import { Application, Container, Graphics } from 'pixi.js';
-import type { BrainState } from '../types/brain';
+import { ChibiFlyRig } from '../scene/ChibiFlyRig';
+import {
+  createWindowsillScene,
+  SCENE_HEIGHT,
+  SCENE_WIDTH,
+  SILL_INTERACTABLES,
+  type WindowsillSceneHandle,
+} from '../scene/WindowsillScene';
+import type {
+  BrainClusters,
+  BrainTelemetry,
+  FlyBehaviorState,
+  Neuromodulators,
+  SensoryInputEvent,
+  TimeOfDay,
+} from '../types/brain';
 
 interface FlyArenaProps {
-  brainState: BrainState | null;
-  onPoke: (x: number, y: number) => void;
+  telemetry: BrainTelemetry | null;
+  timeOfDay: TimeOfDay;
+  xrayEnabled: boolean;
+  onInput: (event: SensoryInputEvent) => void;
 }
 
 interface Ripple {
   graphic: Graphics;
+  color: number;
   age: number;
   maxAge: number;
 }
 
-const ARENA_WIDTH = 800;
-const ARENA_HEIGHT = 600;
+const TIME_LABELS: Record<TimeOfDay, string> = {
+  morning: 'Утро',
+  day: 'День',
+  sunset: 'Закат',
+  night: 'Ночь',
+};
 
-function lerpAngle(current: number, target: number, alpha: number): number {
-  const diff = Math.atan2(Math.sin(target - current), Math.cos(target - current));
-  return current + diff * alpha;
-}
-
-function buildFlyGraphic(): {
-  flyContainer: Container;
-  leftWing: Graphics;
-  rightWing: Graphics;
-} {
-  const flyContainer = new Container();
-
-  // Six schematic legs
-  const legs = new Graphics();
-  const legPairs = [
-    [-4, -6, -12, -16],
-    [0, -7, 0, -18],
-    [4, -6, 12, -15],
-    [-4, 6, -12, 16],
-    [0, 7, 0, 18],
-    [4, 6, 12, 15],
-  ];
-  for (const [x1, y1, x2, y2] of legPairs) {
-    legs.moveTo(x1, y1).lineTo(x2, y2);
-  }
-  legs.stroke({ width: 1.5, color: 0x94a3b8 });
-  flyContainer.addChild(legs);
-
-  // Abdomen (striped amber/dark)
-  const abdomen = new Graphics();
-  abdomen.ellipse(-11, 0, 11, 7).fill({ color: 0xd97706 });
-  abdomen.rect(-18, -5, 3, 10).fill({ color: 0x1e293b, alpha: 0.7 });
-  abdomen.rect(-12, -6, 3, 12).fill({ color: 0x1e293b, alpha: 0.7 });
-  flyContainer.addChild(abdomen);
-
-  // Thorax
-  const thorax = new Graphics();
-  thorax.ellipse(2, 0, 7, 6).fill({ color: 0xf59e0b });
-  flyContainer.addChild(thorax);
-
-  // Head & iconic Drosophila red compound eyes
-  const head = new Graphics();
-  head.circle(10, 0, 5).fill({ color: 0xb45309 });
-  head.circle(12, -3.5, 2.5).fill({ color: 0xef4444 });
-  head.circle(12, 3.5, 2.5).fill({ color: 0xef4444 });
-  // Antennae
-  head.moveTo(14, -1.5).lineTo(19, -4).moveTo(14, 1.5).lineTo(19, 4);
-  head.stroke({ width: 1.2, color: 0xcbd5e1 });
-  flyContainer.addChild(head);
-
-  // Translucent wings animated independently
-  const leftWing = new Graphics();
-  leftWing
-    .ellipse(-8, -8, 12, 5)
-    .fill({ color: 0xe2e8f0, alpha: 0.35 })
-    .stroke({ width: 1, color: 0x94a3b8, alpha: 0.65 });
-  leftWing.pivot.set(2, 0);
-
-  const rightWing = new Graphics();
-  rightWing
-    .ellipse(-8, 8, 12, 5)
-    .fill({ color: 0xe2e8f0, alpha: 0.35 })
-    .stroke({ width: 1, color: 0x94a3b8, alpha: 0.65 });
-  rightWing.pivot.set(2, 0);
-
-  flyContainer.addChild(leftWing, rightWing);
-
-  return { flyContainer, leftWing, rightWing };
-}
-
-export function FlyArena({ brainState, onPoke }: FlyArenaProps) {
+export function FlyArena({ telemetry, timeOfDay, xrayEnabled, onInput }: FlyArenaProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const targetRef = useRef<{ x: number; y: number; angle: number; motor: number; state: string }>({
-    x: ARENA_WIDTH / 2,
-    y: ARENA_HEIGHT / 2,
-    angle: 0,
-    motor: 0.3,
-    state: 'foraging',
+  const sceneRef = useRef<WindowsillSceneHandle | null>(null);
+  const timeOfDayRef = useRef<TimeOfDay>(timeOfDay);
+  const xrayRef = useRef<boolean>(xrayEnabled);
+  const cursorPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  const targetRef = useRef<{
+    x: number;
+    y: number;
+    lookAngle: number;
+    state: FlyBehaviorState;
+    clusters: BrainClusters;
+    neuromodulators: Neuromodulators;
+  }>({
+    x: 375,
+    y: 442,
+    lookAngle: 0,
+    state: 'idle',
+    clusters: {
+      vision: 0.25,
+      olfactory: 0.2,
+      mushroomBody: 0.3,
+      motor: 0.2,
+      hunger: 0.25,
+    },
+    neuromodulators: {
+      octopamine: 0.2,
+      dopamine: 0.45,
+      serotonin: 0.5,
+    },
   });
-  const onPokeRef = useRef(onPoke);
-  const spawnRippleRef = useRef<((x: number, y: number) => void) | null>(null);
+
+  const onInputRef = useRef(onInput);
+  const spawnRippleRef = useRef<((x: number, y: number, color?: number) => void) | null>(null);
 
   useEffect(() => {
-    onPokeRef.current = onPoke;
-  }, [onPoke]);
+    onInputRef.current = onInput;
+  }, [onInput]);
 
   useEffect(() => {
-    if (!brainState) return;
+    timeOfDayRef.current = timeOfDay;
+    sceneRef.current?.setTimeOfDay(timeOfDay);
+  }, [timeOfDay]);
+
+  useEffect(() => {
+    xrayRef.current = xrayEnabled;
+  }, [xrayEnabled]);
+
+  useEffect(() => {
+    if (!telemetry) return;
     targetRef.current = {
-      x: brainState.x,
-      y: brainState.y,
-      angle: brainState.angle,
-      motor: brainState.clusters.motor,
-      state: brainState.state,
+      x: telemetry.x,
+      y: telemetry.y,
+      lookAngle: telemetry.lookAngle,
+      state: telemetry.state,
+      clusters: telemetry.clusters,
+      neuromodulators: telemetry.neuromodulators,
     };
-  }, [brainState]);
+  }, [telemetry]);
 
   useEffect(() => {
     const mount = containerRef.current;
@@ -123,10 +109,12 @@ export function FlyArena({ brainState, onPoke }: FlyArenaProps) {
 
     const initPixi = async () => {
       await app.init({
-        width: ARENA_WIDTH,
-        height: ARENA_HEIGHT,
-        background: '#0b1120',
+        width: SCENE_WIDTH,
+        height: SCENE_HEIGHT,
+        background: '#131726',
         antialias: true,
+        resolution: Math.min(3, Math.max(window.devicePixelRatio || 1, 2)),
+        autoDensity: true,
       });
 
       if (destroyed) {
@@ -140,74 +128,74 @@ export function FlyArena({ brainState, onPoke }: FlyArenaProps) {
       app.canvas.style.cursor = 'crosshair';
       mount.appendChild(app.canvas);
 
-      // Arena grid & petri dish border
-      const bg = new Graphics();
-      for (let gx = 40; gx < ARENA_WIDTH; gx += 40) {
-        bg.moveTo(gx, 0).lineTo(gx, ARENA_HEIGHT);
-      }
-      for (let gy = 40; gy < ARENA_HEIGHT; gy += 40) {
-        bg.moveTo(0, gy).lineTo(ARENA_WIDTH, gy);
-      }
-      bg.stroke({ width: 1, color: 0x1e293b, alpha: 0.65 });
-      bg.rect(16, 16, ARENA_WIDTH - 32, ARENA_HEIGHT - 32).stroke({
-        width: 2,
-        color: 0x334155,
-      });
-      app.stage.addChild(bg);
+      const scene = createWindowsillScene(
+        (x, y) => {
+          spawnRippleRef.current?.(x, y, 0x38bdf8);
+          onInputRef.current({ type: 'dew_drink', x, y });
+        },
+        (x, y) => {
+          spawnRippleRef.current?.(x, y, 0xfb7185);
+          onInputRef.current({ type: 'feed_drop', x, y });
+        }
+      );
+      scene.setTimeOfDay(timeOfDayRef.current);
+      sceneRef.current = scene;
+      app.stage.addChild(scene.root);
 
-      const trailLayer = new Graphics();
       const rippleLayer = new Container();
-      const { flyContainer, leftWing, rightWing } = buildFlyGraphic();
+      app.stage.addChild(rippleLayer);
 
-      flyContainer.x = targetRef.current.x;
-      flyContainer.y = targetRef.current.y;
-      flyContainer.rotation = targetRef.current.angle;
+      const flyRig = new ChibiFlyRig();
+      flyRig.root.x = targetRef.current.x;
+      flyRig.root.y = targetRef.current.y;
+      scene.flyLayer.addChild(flyRig.root);
 
-      app.stage.addChild(trailLayer, rippleLayer, flyContainer);
+      let lastHoverSent = 0;
 
-      const trailPoints: Array<{ x: number; y: number }> = [];
-      let wingPhase = 0;
-
-      spawnRippleRef.current = (rx: number, ry: number) => {
+      spawnRippleRef.current = (rx: number, ry: number, color = 0x38bdf8) => {
         const g = new Graphics();
         g.x = rx;
         g.y = ry;
         rippleLayer.addChild(g);
-        ripples.push({ graphic: g, age: 0, maxAge: 28 });
+        ripples.push({ graphic: g, color, age: 0, maxAge: 28 });
       };
 
       app.ticker.add((ticker) => {
         const alpha = Math.min(1, 0.22 * ticker.deltaTime);
         const target = targetRef.current;
 
-        flyContainer.x += (target.x - flyContainer.x) * alpha;
-        flyContainer.y += (target.y - flyContainer.y) * alpha;
-        flyContainer.rotation = lerpAngle(flyContainer.rotation, target.angle, alpha);
+        scene.update(ticker.deltaTime, timeOfDayRef.current);
 
-        // Wing flutter speed scales with motor cluster activity
-        const flutterRate = target.state === 'resting' ? 0.08 : 0.35 + target.motor * 0.7;
-        wingPhase += flutterRate * ticker.deltaTime;
-        const wingAngle = Math.sin(wingPhase) * (target.state === 'resting' ? 0.04 : 0.22);
-        leftWing.rotation = -wingAngle;
-        rightWing.rotation = wingAngle;
+        flyRig.root.x += (target.x - flyRig.root.x) * alpha;
+        flyRig.root.y += (target.y - flyRig.root.y) * alpha;
 
-        // Movement trail
-        trailPoints.push({ x: flyContainer.x, y: flyContainer.y });
-        if (trailPoints.length > 48) {
-          trailPoints.shift();
-        }
-        trailLayer.clear();
-        for (let i = 1; i < trailPoints.length; i++) {
-          const prev = trailPoints[i - 1];
-          const curr = trailPoints[i];
-          const progress = i / trailPoints.length;
-          trailLayer
-            .moveTo(prev.x, prev.y)
-            .lineTo(curr.x, curr.y)
-            .stroke({ width: 1.5, color: 0x38bdf8, alpha: progress * 0.35 });
-        }
+        // Perspective depth scaling: closer on foreground sill -> slightly larger
+        const depthScale = 0.84 + Math.max(0, Math.min(1, flyRig.root.y / SCENE_HEIGHT)) * 0.28;
+        flyRig.root.scale.set(depthScale);
 
-        // Update click ripples
+        const isFlying = target.state === 'fly' || target.state === 'startled';
+        scene.shadow.x = flyRig.root.x;
+        scene.shadow.y = flyRig.root.y + (isFlying ? 52 : 39) * depthScale;
+        scene.shadow.scale.set(isFlying ? depthScale * 0.68 : depthScale);
+        scene.shadow.alpha = isFlying ? 0.2 : 0.36;
+
+        const cursorOffset = cursorPosRef.current
+          ? {
+              dx: cursorPosRef.current.x - flyRig.root.x,
+              dy: cursorPosRef.current.y - flyRig.root.y,
+            }
+          : null;
+
+        flyRig.update({
+          deltaTime: ticker.deltaTime,
+          state: target.state,
+          clusters: target.clusters,
+          neuromodulators: target.neuromodulators,
+          lookAngle: target.lookAngle,
+          cursorOffset,
+          xrayEnabled: xrayRef.current,
+        });
+
         for (let i = ripples.length - 1; i >= 0; i--) {
           const r = ripples[i];
           r.age += ticker.deltaTime;
@@ -221,18 +209,47 @@ export function FlyArena({ brainState, onPoke }: FlyArenaProps) {
           r.graphic.clear();
           r.graphic
             .circle(0, 0, 8 + t * 34)
-            .stroke({ width: 2, color: 0x38bdf8, alpha: 1 - t });
+            .stroke({ width: 2, color: r.color, alpha: 1 - t });
         }
       });
 
-      app.canvas.addEventListener('pointerdown', (event: PointerEvent) => {
+      const toArenaCoords = (event: PointerEvent) => {
         const rect = app.canvas.getBoundingClientRect();
-        const scaleX = ARENA_WIDTH / rect.width;
-        const scaleY = ARENA_HEIGHT / rect.height;
-        const x = Math.round((event.clientX - rect.left) * scaleX);
-        const y = Math.round((event.clientY - rect.top) * scaleY);
-        spawnRippleRef.current?.(x, y);
-        onPokeRef.current(x, y);
+        const scaleX = SCENE_WIDTH / rect.width;
+        const scaleY = SCENE_HEIGHT / rect.height;
+        return {
+          x: Math.round((event.clientX - rect.left) * scaleX),
+          y: Math.round((event.clientY - rect.top) * scaleY),
+        };
+      };
+
+      app.canvas.addEventListener('pointerdown', (event: PointerEvent) => {
+        const { x, y } = toArenaCoords(event);
+        const hitDew =
+          Math.hypot(x - SILL_INTERACTABLES.dewDrop.x, y - SILL_INTERACTABLES.dewDrop.y) <=
+          SILL_INTERACTABLES.dewDrop.radius;
+        const hitBerry =
+          Math.hypot(
+            x - SILL_INTERACTABLES.berryBasket.x,
+            y - SILL_INTERACTABLES.berryBasket.y
+          ) <= SILL_INTERACTABLES.berryBasket.radius;
+        if (!hitDew && !hitBerry) {
+          spawnRippleRef.current?.(x, y, 0x38bdf8);
+          onInputRef.current({ type: 'feather_tickle', x, y });
+        }
+      });
+
+      app.canvas.addEventListener('pointermove', (event: PointerEvent) => {
+        const coords = toArenaCoords(event);
+        cursorPosRef.current = coords;
+        const now = performance.now();
+        if (now - lastHoverSent < 60) return;
+        lastHoverSent = now;
+        onInputRef.current({ type: 'cursor_hover', x: coords.x, y: coords.y });
+      });
+
+      app.canvas.addEventListener('pointerleave', () => {
+        cursorPosRef.current = null;
       });
     };
 
@@ -240,6 +257,7 @@ export function FlyArena({ brainState, onPoke }: FlyArenaProps) {
 
     return () => {
       destroyed = true;
+      sceneRef.current = null;
       spawnRippleRef.current = null;
       if (app.renderer) {
         app.destroy(true, { children: true });
@@ -251,8 +269,8 @@ export function FlyArena({ brainState, onPoke }: FlyArenaProps) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl">
       <div className="flex items-center justify-between border-b border-slate-800 px-4 py-2.5 text-xs text-slate-400">
-        <span>Арена Drosophila (800 × 600)</span>
-        <span>Клик по арене отправляет poke(x, y)</span>
+        <span>Подоконник (анфас) · Освещение: {TIME_LABELS[timeOfDay]}</span>
+        <span>Клик по корзинке/росе — покормить/напоить · По сцене — щекотка</span>
       </div>
       <div ref={containerRef} className="w-full" />
     </div>
